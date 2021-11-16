@@ -1,6 +1,7 @@
 # Transfer Learning
 
 ### Datasets Preparation
+레포지토리 내에 data 폴더 생성
 [UODB benchmark](http://www.svcl.ucsd.edu/projects/universal-detection/)에서 데이터셋 설치 후 data 폴더로 이동
 
 ### prerequisites
