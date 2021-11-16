@@ -8,9 +8,14 @@ from torch.autograd import Variable
 import numpy as np
 from model.utils.config import cfg
 from model.rpn.rpn import _RPN
+
+''' Removed files from pytorch-1.0 branch of faster-rcnn.pytorch repo
 from model.roi_pooling.modules.roi_pool import _RoIPooling
 from model.roi_crop.modules.roi_crop import _RoICrop
 from model.roi_align.modules.roi_align import RoIAlignAvg
+'''
+from model.roi_layers import ROIAlign, ROIPool
+
 from model.rpn.proposal_target_layer_cascade import _ProposalTargetLayer
 import time
 import pdb
@@ -18,38 +23,52 @@ from model.utils.net_utils import _smooth_l1_loss, _crop_pool_layer, _affine_gri
 
 class _fasterRCNN(nn.Module):
     """ faster RCNN """
-    def __init__(self, classes, class_agnostic):
+    def __init__(self, classes, class_agnostic, rpn_batchsize):
         super(_fasterRCNN, self).__init__()
         self.classes = classes
         self.n_classes = len(classes)
         self.class_agnostic = class_agnostic
+        self.rpn_batchsize = rpn_batchsize
         # loss
         self.RCNN_loss_cls = 0
         self.RCNN_loss_bbox = 0
 
         # define rpn
-        self.RCNN_rpn = _RPN(self.dout_base_model)
+        self.RCNN_rpn = _RPN(self.dout_base_model, self.rpn_batchsize)
         self.RCNN_proposal_target = _ProposalTargetLayer(self.n_classes)
-        self.RCNN_roi_pool = _RoIPooling(cfg.POOLING_SIZE, cfg.POOLING_SIZE, 1.0/16.0)
-        self.RCNN_roi_align = RoIAlignAvg(cfg.POOLING_SIZE, cfg.POOLING_SIZE, 1.0/16.0)
 
+        #print 'INFO: pooling size is: ', cfg.POOLING_SIZE_H, cfg.POOLING_SIZE_W
+        #self.RCNN_roi_pool = _RoIPooling(cfg.POOLING_SIZE_H, cfg.POOLING_SIZE_W, 1.0/16.0)
+        #self.RCNN_roi_align = RoIAlignAvg(cfg.POOLING_SIZE_H, cfg.POOLING_SIZE_W, 1.0/16.0)
+        
+        self.RCNN_roi_pool = ROIPool((cfg.POOLING_SIZE_H, cfg.POOLING_SIZE_W), 1.0/16.0)
+        self.RCNN_roi_align = ROIAlign((cfg.POOLING_SIZE_H, cfg.POOLING_SIZE_W), 1.0/16.0, 0)
+
+        ''' RoICrop removed from pytorch-1.0 branch
+        ## wrote by Xudong Wang
+        self.grid_size_H = cfg.POOLING_SIZE_H * 2 if cfg.CROP_RESIZE_WITH_MAX_POOL else cfg.POOLING_SIZE_H
+        self.grid_size_W = cfg.POOLING_SIZE_W * 2 if cfg.CROP_RESIZE_WITH_MAX_POOL else cfg.POOLING_SIZE_W
+        ## end
         self.grid_size = cfg.POOLING_SIZE * 2 if cfg.CROP_RESIZE_WITH_MAX_POOL else cfg.POOLING_SIZE
+
         self.RCNN_roi_crop = _RoICrop()
+        '''
 
     def forward(self, im_data, im_info, gt_boxes, num_boxes):
         batch_size = im_data.size(0)
-
         im_info = im_info.data
         gt_boxes = gt_boxes.data
         num_boxes = num_boxes.data
-
+        #print('original gt_boxes is ',gt_boxes)
         # feed image data to base model to obtain base feature map
-        base_feat = self.RCNN_base(im_data)
+        cfg.n = 0
+        x = im_data
+        base_feat = self.RCNN_base(x)
 
-        # feed base feature map to RPN to obtain rois
+        # feed base feature map tp RPN to obtain rois
         rois, rpn_loss_cls, rpn_loss_bbox = self.RCNN_rpn(base_feat, im_info, gt_boxes, num_boxes)
 
-        # if it is training phase, then use ground truth bboxes for refining
+        # if it is training phrase, then use ground trubut bboxes for refining
         if self.training:
             roi_data = self.RCNN_proposal_target(rois, gt_boxes, num_boxes)
             rois, rois_label, rois_target, rois_inside_ws, rois_outside_ws = roi_data
@@ -69,6 +88,7 @@ class _fasterRCNN(nn.Module):
         rois = Variable(rois)
         # do roi pooling based on predicted rois
 
+        ''' Removed roi_crop
         if cfg.POOLING_MODE == 'crop':
             # pdb.set_trace()
             # pooled_feat_anchor = _crop_pool_layer(base_feat, rois.view(-1, 5))
@@ -77,7 +97,8 @@ class _fasterRCNN(nn.Module):
             pooled_feat = self.RCNN_roi_crop(base_feat, Variable(grid_yx).detach())
             if cfg.CROP_RESIZE_WITH_MAX_POOL:
                 pooled_feat = F.max_pool2d(pooled_feat, 2, 2)
-        elif cfg.POOLING_MODE == 'align':
+        '''
+        if cfg.POOLING_MODE == 'align' or cfg.POOLING_MODE == 'crop':
             pooled_feat = self.RCNN_roi_align(base_feat, rois.view(-1, 5))
         elif cfg.POOLING_MODE == 'pool':
             pooled_feat = self.RCNN_roi_pool(base_feat, rois.view(-1,5))
@@ -95,7 +116,7 @@ class _fasterRCNN(nn.Module):
 
         # compute object classification probability
         cls_score = self.RCNN_cls_score(pooled_feat)
-        cls_prob = F.softmax(cls_score, 1)
+        cls_prob = F.softmax(cls_score,dim=1)
 
         RCNN_loss_cls = 0
         RCNN_loss_bbox = 0
@@ -107,9 +128,14 @@ class _fasterRCNN(nn.Module):
             # bounding box regression L1 loss
             RCNN_loss_bbox = _smooth_l1_loss(bbox_pred, rois_target, rois_inside_ws, rois_outside_ws)
 
-
         cls_prob = cls_prob.view(batch_size, rois.size(1), -1)
         bbox_pred = bbox_pred.view(batch_size, rois.size(1), -1)
+        
+        if self.training:
+            rpn_loss_cls = torch.unsqueeze(rpn_loss_cls, 0)
+            rpn_loss_bbox = torch.unsqueeze(rpn_loss_bbox, 0)
+            RCNN_loss_cls = torch.unsqueeze(RCNN_loss_cls, 0)
+            RCNN_loss_bbox = torch.unsqueeze(RCNN_loss_bbox, 0)
 
         return rois, cls_prob, bbox_pred, rpn_loss_cls, rpn_loss_bbox, RCNN_loss_cls, RCNN_loss_bbox, rois_label
 

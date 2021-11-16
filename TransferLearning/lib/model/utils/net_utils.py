@@ -5,7 +5,7 @@ from torch.autograd import Variable
 import numpy as np
 import torchvision.models as models
 from model.utils.config import cfg
-from model.roi_crop.functions.roi_crop import RoICropFunction
+# from model.roi_crop.functions.roi_crop import RoICropFunction
 import cv2
 import pdb
 import random
@@ -42,11 +42,50 @@ def clip_gradient(model, clip_norm):
         if p.requires_grad:
             modulenorm = p.grad.data.norm()
             totalnorm += modulenorm ** 2
-    totalnorm = torch.sqrt(totalnorm).item()
-    norm = (clip_norm / max(totalnorm, clip_norm))
+    totalnorm = np.sqrt(totalnorm)
+
+    norm = clip_norm / max(totalnorm, clip_norm)
     for p in model.parameters():
         if p.requires_grad:
             p.grad.mul_(norm)
+
+def update_chosen_se_layer(model, cls_ind):
+    """Computes a gradient clipping coefficient based on gradient norm."""
+    num_datasets = len(cfg.datasets_list)
+    for name, param in model.named_parameters():
+        if param.requires_grad and 'domain_attention.SE_Layers.' in name and int(name.split('.')[-4]) != cls_ind:
+            param.grad.data.fill_(0)
+
+def print_chosen_se_layer(model, cls_ind):
+    """Computes a gradient clipping coefficient based on gradient norm."""
+    num_datasets = len(cfg.datasets_list)
+    for name, param in model.named_parameters():
+        if param.requires_grad and 'module.RCNN_top.0.2.domain_attention.SE_Layers.' in name and '.fc.0.weight' in name:
+            print(name, torch.sum(param.grad.data), torch.sum(param), int(name.split('.')[-4]), cls_ind)
+
+def fix_some_filters(model):
+    """Fix some filters of certain layers."""
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            if '.1.weight' in name or '.1.bias' in name:
+                continue
+            shape = param.grad.data.shape
+            if len(shape) > 2:
+                add_num1,add_num2 = add_filter_num2(shape[0],shape[1])
+            else:
+                add_num1,add_num2 = add_filter_num2(shape[0],64)
+            if 'bbox_pred_layers' in name or 'cls_score_layers' in name:
+                continue
+            elif name == 'module.RCNN_base.0.weight':
+                param.grad.data[:add_num1] = 0
+            elif len(shape) > 2:
+                param.grad.data[:add_num1,:add_num2] = 0
+
+def normalize_updated_filter(filter_grad):
+    """
+    Used for nomalizing require gradient filters. Still need to be finished
+    """
+    return filter_grad
 
 def vis_detections(im, class_name, dets, thresh=0.8):
     """Visual debugging of detections."""
@@ -71,19 +110,21 @@ def save_checkpoint(state, filename):
 
 def _smooth_l1_loss(bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights, sigma=1.0, dim=[1]):
     
+    #print(bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights)
+    
     sigma_2 = sigma ** 2
     box_diff = bbox_pred - bbox_targets
     in_box_diff = bbox_inside_weights * box_diff
     abs_in_box_diff = torch.abs(in_box_diff)
     smoothL1_sign = (abs_in_box_diff < 1. / sigma_2).detach().float()
+
     in_loss_box = torch.pow(in_box_diff, 2) * (sigma_2 / 2.) * smoothL1_sign \
                   + (abs_in_box_diff - (0.5 / sigma_2)) * (1. - smoothL1_sign)
     out_loss_box = bbox_outside_weights * in_loss_box
-    loss_box = out_loss_box
     for i in sorted(dim, reverse=True):
-      loss_box = loss_box.sum(i)
-    loss_box = loss_box.mean()
-    return loss_box
+      out_loss_box = out_loss_box.sum(i)
+    out_loss_box = out_loss_box.mean()
+    return out_loss_box
 
 def _crop_pool_layer(bottom, rois, max_pool=True):
     # code modified from 
@@ -194,30 +235,30 @@ def _affine_theta(rois, input_size):
 
     return theta
 
-def compare_grid_sample():
-    # do gradcheck
-    N = random.randint(1, 8)
-    C = 2 # random.randint(1, 8)
-    H = 5 # random.randint(1, 8)
-    W = 4 # random.randint(1, 8)
-    input = Variable(torch.randn(N, C, H, W).cuda(), requires_grad=True)
-    input_p = input.clone().data.contiguous()
+# def compare_grid_sample():
+#     # do gradcheck
+#     N = random.randint(1, 8)
+#     C = 2 # random.randint(1, 8)
+#     H = 5 # random.randint(1, 8)
+#     W = 4 # random.randint(1, 8)
+#     input = Variable(torch.randn(N, C, H, W).cuda(), requires_grad=True)
+#     input_p = input.clone().data.contiguous()
    
-    grid = Variable(torch.randn(N, H, W, 2).cuda(), requires_grad=True)
-    grid_clone = grid.clone().contiguous()
+#     grid = Variable(torch.randn(N, H, W, 2).cuda(), requires_grad=True)
+#     grid_clone = grid.clone().contiguous()
 
-    out_offcial = F.grid_sample(input, grid)    
-    grad_outputs = Variable(torch.rand(out_offcial.size()).cuda())
-    grad_outputs_clone = grad_outputs.clone().contiguous()
-    grad_inputs = torch.autograd.grad(out_offcial, (input, grid), grad_outputs.contiguous())
-    grad_input_off = grad_inputs[0]
+#     out_offcial = F.grid_sample(input, grid)    
+#     grad_outputs = Variable(torch.rand(out_offcial.size()).cuda())
+#     grad_outputs_clone = grad_outputs.clone().contiguous()
+#     grad_inputs = torch.autograd.grad(out_offcial, (input, grid), grad_outputs.contiguous())
+#     grad_input_off = grad_inputs[0]
 
 
-    crf = RoICropFunction()
-    grid_yx = torch.stack([grid_clone.data[:,:,:,1], grid_clone.data[:,:,:,0]], 3).contiguous().cuda()
-    out_stn = crf.forward(input_p, grid_yx)
-    grad_inputs = crf.backward(grad_outputs_clone.data)
-    grad_input_stn = grad_inputs[0]
-    pdb.set_trace()
+#     crf = RoICropFunction()
+#     grid_yx = torch.stack([grid_clone.data[:,:,:,1], grid_clone.data[:,:,:,0]], 3).contiguous().cuda()
+#     out_stn = crf.forward(input_p, grid_yx)
+#     grad_inputs = crf.backward(grad_outputs_clone.data)
+#     grad_input_stn = grad_inputs[0]
+#     pdb.set_trace()
 
-    delta = (grad_input_off.data - grad_input_stn).sum()
+#     delta = (grad_input_off.data - grad_input_stn).sum()

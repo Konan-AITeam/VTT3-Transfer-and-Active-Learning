@@ -14,8 +14,8 @@ import PIL
 from model.utils.cython_bbox import bbox_overlaps
 import numpy as np
 import scipy.sparse
-from model.utils.config import cfg
 import pdb
+from model.utils.config import cfg
 
 ROOT_DIR = osp.join(osp.dirname(__file__), '..', '..')
 
@@ -118,8 +118,30 @@ class imdb(object):
       boxes = self.roidb[i]['boxes'].copy()
       oldx1 = boxes[:, 0].copy()
       oldx2 = boxes[:, 2].copy()
-      boxes[:, 0] = widths[i] - oldx2 - 1
-      boxes[:, 2] = widths[i] - oldx1 - 1
+      if cfg.dataset == 'widerface' or cfg.dataset == 'dota' or cfg.dataset == 'deeplesion' or cfg.dataset == 'VTT':
+        boxes[:, 0] = widths[i] - oldx2
+        boxes[:, 2] = widths[i] - oldx1
+      else:
+        boxes[:, 0] = widths[i] - oldx2 - 1
+        boxes[:, 2] = widths[i] - oldx1 - 1
+      index = np.where((boxes[:, 2] >= boxes[:, 0])==False)
+
+      if len(index[0]) != 0:
+        print('annotation error in image: ',self.image_path_at(i))
+        print('original boxes is: ',self.roidb[i]['boxes'][index[0]])
+        print('flipped boxes is: ', boxes[index[0]])
+        print('width is: ', widths[i])
+        
+        for j in index[0]:
+          if boxes[j,0] > 60000:
+            boxes[j,0] = 0
+          elif boxes[j,1] > 60000:
+            boxes[j,1] = 0
+          else:
+            boxes[j,2] = boxes[j,0] + 1
+            boxes[j,3] = boxes[j,1] + 1
+          print('manually corrected boxes is: ', boxes[index[0]])
+
       assert (boxes[:, 2] >= boxes[:, 0]).all()
       entry = {'boxes': boxes,
                'gt_overlaps': self.roidb[i]['gt_overlaps'],

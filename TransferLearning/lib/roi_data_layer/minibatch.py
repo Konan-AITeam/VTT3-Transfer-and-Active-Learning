@@ -13,21 +13,23 @@ from __future__ import print_function
 import numpy as np
 import numpy.random as npr
 from scipy.misc import imread
-from model.utils.config import cfg
 from model.utils.blob import prep_im_for_blob, im_list_to_blob
 import pdb
-def get_minibatch(roidb, num_classes):
+from model.utils.config import cfg
+
+def get_minibatch(roidb, num_classes, target_size576=1, target_size600=1, target_size800=1):
   """Given a roidb, construct a minibatch sampled from it."""
   num_images = len(roidb)
   # Sample random scales to use for each image in this batch
   random_scale_inds = npr.randint(0, high=len(cfg.TRAIN.SCALES),
                   size=num_images)
+  # print('train scales is: ', cfg.TRAIN.SCALES, num_classes)
   assert(cfg.TRAIN.BATCH_SIZE % num_images == 0), \
     'num_images ({}) must divide BATCH_SIZE ({})'. \
     format(num_images, cfg.TRAIN.BATCH_SIZE)
 
   # Get the input image blob, formatted for caffe
-  im_blob, im_scales = _get_image_blob(roidb, random_scale_inds)
+  im_blob, im_scales = _get_image_blob(roidb, random_scale_inds, target_size576, target_size600, target_size800)
 
   blobs = {'data': im_blob}
 
@@ -39,8 +41,8 @@ def get_minibatch(roidb, num_classes):
     # Include all ground truth boxes
     gt_inds = np.where(roidb[0]['gt_classes'] != 0)[0]
   else:
-    # For the COCO ground truth boxes, exclude the ones that are ''iscrowd'' 
-    gt_inds = np.where((roidb[0]['gt_classes'] != 0) & np.all(roidb[0]['gt_overlaps'].toarray() > -1.0, axis=1))[0]
+    # For the COCO ground truth boxes, exclude the ones that are ''iscrowd''
+    gt_inds = np.where(roidb[0]['gt_classes'] != 0 & np.all(roidb[0]['gt_overlaps'].toarray() > -1.0, axis=1))[0]
   gt_boxes = np.empty((len(gt_inds), 5), dtype=np.float32)
   gt_boxes[:, 0:4] = roidb[0]['boxes'][gt_inds, :] * im_scales[0]
   gt_boxes[:, 4] = roidb[0]['gt_classes'][gt_inds]
@@ -53,7 +55,7 @@ def get_minibatch(roidb, num_classes):
 
   return blobs
 
-def _get_image_blob(roidb, scale_inds):
+def _get_image_blob(roidb, scale_inds, target_size576=1,target_size600=1, target_size800=1):
   """Builds an input blob from the images in the roidb at the specified
   scales.
   """
@@ -75,6 +77,16 @@ def _get_image_blob(roidb, scale_inds):
     if roidb[i]['flipped']:
       im = im[:, ::-1, :]
     target_size = cfg.TRAIN.SCALES[scale_inds[i]]
+
+    if cfg.random_resize:
+      if target_size == 600 and cfg.universal:
+        target_size = target_size*target_size600
+      elif target_size >= 780 and cfg.universal:
+        target_size = target_size*target_size800
+      elif target_size == 576 and cfg.universal:
+        target_size = int(target_size576)
+    #print('target_size',target_size, cfg.size, cfg.TRAIN.MAX_SIZE)
+    #print('cfg.TRAIN.SCALES', cfg.TRAIN.SCALES)
     im, im_scale = prep_im_for_blob(im, cfg.PIXEL_MEANS, target_size,
                     cfg.TRAIN.MAX_SIZE)
     im_scales.append(im_scale)

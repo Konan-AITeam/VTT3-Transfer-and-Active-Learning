@@ -1,9 +1,10 @@
-cython
+Cython
 cffi
 opencv-python
-scipy
+scipy==1.1.0
 msgpack
 easydict
 matplotlib
 pyyaml
 tensorboardX
+Pillow

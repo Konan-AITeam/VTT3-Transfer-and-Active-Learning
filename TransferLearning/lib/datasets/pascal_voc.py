@@ -36,7 +36,6 @@ except NameError:
 
 # <<<< obsolete
 
-
 class pascal_voc(imdb):
     def __init__(self, image_set, year, devkit_path=None):
         imdb.__init__(self, 'voc_' + year + '_' + image_set)
@@ -46,12 +45,13 @@ class pascal_voc(imdb):
             else devkit_path
         self._data_path = os.path.join(self._devkit_path, 'VOC' + self._year)
         self._classes = ('__background__',  # always index 0
-                         'aeroplane', 'bicycle', 'bird', 'boat',
-                         'bottle', 'bus', 'car', 'cat', 'chair',
-                         'cow', 'diningtable', 'dog', 'horse',
-                         'motorbike', 'person', 'pottedplant',
-                         'sheep', 'sofa', 'train', 'tvmonitor')
+                          'aeroplane', 'bicycle', 'bird', 'boat',
+                          'bottle', 'bus', 'car', 'cat', 'chair',
+                          'cow', 'diningtable', 'dog', 'horse',
+                          'motorbike', 'person', 'pottedplant',
+                          'sheep', 'sofa', 'train', 'tvmonitor')
         self._class_to_ind = dict(zip(self.classes, xrange(self.num_classes)))
+        print('class name and index: ', self._class_to_ind)
         self._image_ext = '.jpg'
         self._image_index = self._load_image_set_index()
         # Default to roidb handler
@@ -103,17 +103,19 @@ class pascal_voc(imdb):
         # self._devkit_path + /VOCdevkit2007/VOC2007/ImageSets/Main/val.txt
         image_set_file = os.path.join(self._data_path, 'ImageSets', 'Main',
                                       self._image_set + '.txt')
+        print('image_set_file loaded from: ', image_set_file)
         assert os.path.exists(image_set_file), \
             'Path does not exist: {}'.format(image_set_file)
         with open(image_set_file) as f:
             image_index = [x.strip() for x in f.readlines()]
+        print('samples number is: ', len(image_index))
         return image_index
 
     def _get_default_path(self):
         """
         Return the default path where PASCAL VOC is expected to be installed.
         """
-        return os.path.join(cfg.DATA_DIR, 'VOCdevkit' + self._year)
+        return os.path.join(cfg.DATA_DIR, 'VOC0712')
 
     def gt_roidb(self):
         """
@@ -240,11 +242,19 @@ class pascal_voc(imdb):
             difficult = 0 if diffc == None else int(diffc.text)
             ishards[ix] = difficult
 
-            cls = self._class_to_ind[obj.find('name').text.lower().strip()]
-            boxes[ix, :] = [x1, y1, x2, y2]
-            gt_classes[ix] = cls
-            overlaps[ix, cls] = 1.0
-            seg_areas[ix] = (x2 - x1 + 1) * (y2 - y1 + 1)
+            class_name = obj.find('name').text.lower().strip()
+            if class_name in self._classes:
+                cls = self._class_to_ind[obj.find('name').text.lower().strip()]
+                boxes[ix, :] = [x1, y1, x2, y2]
+                gt_classes[ix] = cls
+                overlaps[ix, cls] = 1.0
+                seg_areas[ix] = (x2 - x1 + 1) * (y2 - y1 + 1)
+            else:
+                cls = 0
+                boxes[ix, :] = [x1, y1, x2, y2]
+                gt_classes[ix] = 0
+                overlaps[ix, 0] = 1.0
+                seg_areas[ix] = (x2 - x1 + 1) * (y2 - y1 + 1)   
 
         overlaps = scipy.sparse.csr_matrix(overlaps)
 

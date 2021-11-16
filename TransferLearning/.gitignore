@@ -1,0 +1,25 @@
+# Ignore data folder
+data/
+data
+
+# Ignore models folder
+models/
+
+# Ignore build folder
+build/
+*.egg-info
+redundant/
+
+# Ignore .pyc .so .o .pkl .pth .pth.tar files
+*.pyc
+*.so
+*.o
+*.pkl
+*.pth
+*.pth.tar
+
+# Ignore cache files
+__pycache__/
+
+# Ignore VS Code setting files
+settings.json

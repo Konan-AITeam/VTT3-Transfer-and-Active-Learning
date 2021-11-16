@@ -16,7 +16,6 @@ import pprint
 import pdb
 import time
 import cv2
-import imutils
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
@@ -150,8 +149,6 @@ if __name__ == '__main__':
   if args.set_cfgs is not None:
     cfg_from_list(args.set_cfgs)
 
-  cfg.USE_GPU_NMS = args.cuda
-
   print('Using config:')
   pprint.pprint(cfg)
   np.random.seed(cfg.RNG_SEED)
@@ -188,10 +185,7 @@ if __name__ == '__main__':
   fasterRCNN.create_architecture()
 
   print("load checkpoint %s" % (load_name))
-  if args.cuda > 0:
-    checkpoint = torch.load(load_name)
-  else:
-    checkpoint = torch.load(load_name, map_location=(lambda storage, loc: storage))
+  checkpoint = torch.load(load_name)
   fasterRCNN.load_state_dict(checkpoint['model'])
   if 'pooling_mode' in checkpoint.keys():
     cfg.POOLING_MODE = checkpoint['pooling_mode']
@@ -264,12 +258,11 @@ if __name__ == '__main__':
         im_file = os.path.join(args.image_dir, imglist[num_images])
         # im = cv2.imread(im_file)
         im_in = np.array(imread(im_file))
-        if len(im_in.shape) == 2:
-          im_in = im_in[:,:,np.newaxis]
-          im_in = np.concatenate((im_in,im_in,im_in), axis=2)
-        # rgb -> bgr
-        im_in = im_in[:,:,::-1]
-      im = im_in
+      if len(im_in.shape) == 2:
+        im_in = im_in[:,:,np.newaxis]
+        im_in = np.concatenate((im_in,im_in,im_in), axis=2)
+      # rgb -> bgr
+      im = im_in[:,:,::-1]
 
       blobs, im_scales = _get_image_blob(im)
       assert len(im_scales) == 1, "Only single-image batch implemented"
@@ -302,29 +295,19 @@ if __name__ == '__main__':
           if cfg.TRAIN.BBOX_NORMALIZE_TARGETS_PRECOMPUTED:
           # Optionally normalize targets by a precomputed mean and stdev
             if args.class_agnostic:
-                if args.cuda > 0:
-                    box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS).cuda() \
-                               + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS).cuda()
-                else:
-                    box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS) \
-                               + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS)
-
+                box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS).cuda() \
+                           + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS).cuda()
                 box_deltas = box_deltas.view(1, -1, 4)
             else:
-                if args.cuda > 0:
-                    box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS).cuda() \
-                               + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS).cuda()
-                else:
-                    box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS) \
-                               + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS)
+                box_deltas = box_deltas.view(-1, 4) * torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_STDS).cuda() \
+                           + torch.FloatTensor(cfg.TRAIN.BBOX_NORMALIZE_MEANS).cuda()
                 box_deltas = box_deltas.view(1, -1, 4 * len(pascal_classes))
 
           pred_boxes = bbox_transform_inv(boxes, box_deltas, 1)
           pred_boxes = clip_boxes(pred_boxes, im_info.data, 1)
       else:
           # Simply repeat the boxes, once for each class
-          _ = torch.from_numpy(np.tile(boxes, (1, scores.shape[1])))
-          pred_boxes = _.cuda() if args.cuda > 0 else _
+          pred_boxes = np.tile(boxes, (1, scores.shape[1]))
 
       pred_boxes /= im_scales[0]
 
@@ -349,7 +332,7 @@ if __name__ == '__main__':
             cls_dets = torch.cat((cls_boxes, cls_scores.unsqueeze(1)), 1)
             # cls_dets = torch.cat((cls_boxes, cls_scores), 1)
             cls_dets = cls_dets[order]
-            keep = nms(cls_dets, cfg.TEST.NMS, force_cpu=not cfg.USE_GPU_NMS)
+            keep = nms(cls_dets, cfg.TEST.NMS)
             cls_dets = cls_dets[keep.view(-1).long()]
             if vis:
               im2show = vis_detections(im2show, pascal_classes[j], cls_dets.cpu().numpy(), 0.5)
@@ -368,7 +351,8 @@ if __name__ == '__main__':
           result_path = os.path.join(args.image_dir, imglist[num_images][:-4] + "_det.jpg")
           cv2.imwrite(result_path, im2show)
       else:
-          cv2.imshow("frame", im2show)
+          im2showRGB = cv2.cvtColor(im2show, cv2.COLOR_BGR2RGB)
+          cv2.imshow("frame", im2showRGB)
           total_toc = time.time()
           total_time = total_toc - total_tic
           frame_rate = 1 / total_time

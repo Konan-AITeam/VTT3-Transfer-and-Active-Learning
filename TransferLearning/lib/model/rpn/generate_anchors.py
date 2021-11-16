@@ -41,7 +41,6 @@ try:
 except NameError:
     xrange = range  # Python 3
 
-
 def generate_anchors(base_size=16, ratios=[0.5, 1, 2],
                      scales=2**np.arange(3, 6)):
     """
@@ -50,9 +49,11 @@ def generate_anchors(base_size=16, ratios=[0.5, 1, 2],
     """
 
     base_anchor = np.array([1, 1, base_size, base_size]) - 1
+    #print('base anchor is: ', base_anchor)
     ratio_anchors = _ratio_enum(base_anchor, ratios)
     anchors = np.vstack([_scale_enum(ratio_anchors[i, :], scales)
                          for i in xrange(ratio_anchors.shape[0])])
+    #print('all anchors are: ',anchors)
     return anchors
 
 def _whctrs(anchor):
@@ -86,21 +87,26 @@ def _ratio_enum(anchor, ratios):
     """
 
     w, h, x_ctr, y_ctr = _whctrs(anchor)
+    #print(w, h, x_ctr, y_ctr)
     size = w * h
     size_ratios = size / ratios
+    #print('size_ratios',size_ratios)
     ws = np.round(np.sqrt(size_ratios))
     hs = np.round(ws * ratios)
+    #print(ws, hs, x_ctr, y_ctr)
     anchors = _mkanchors(ws, hs, x_ctr, y_ctr)
+    #print('base anchors with ratio is:', anchors)
     return anchors
 
 def _scale_enum(anchor, scales):
     """
     Enumerate a set of anchors for each scale wrt an anchor.
     """
-
     w, h, x_ctr, y_ctr = _whctrs(anchor)
+    #print('scaled: ',w, h, x_ctr, y_ctr)
     ws = w * scales
     hs = h * scales
+    #print('width and height are: ',ws,hs)
     anchors = _mkanchors(ws, hs, x_ctr, y_ctr)
     return anchors
 

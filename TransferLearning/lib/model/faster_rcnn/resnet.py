@@ -12,10 +12,10 @@ from torch.autograd import Variable
 import math
 import torch.utils.model_zoo as model_zoo
 import pdb
+import torchvision
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
        'resnet152']
-
 
 model_urls = {
   'resnet18': 'https://s3.amazonaws.com/pytorch/models/resnet18-5c106cde.pth',
@@ -29,7 +29,6 @@ def conv3x3(in_planes, out_planes, stride=1):
   "3x3 convolution with padding"
   return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
            padding=1, bias=False)
-
 
 class BasicBlock(nn.Module):
   expansion = 1
@@ -61,7 +60,6 @@ class BasicBlock(nn.Module):
     out = self.relu(out)
 
     return out
-
 
 class Bottleneck(nn.Module):
   expansion = 4
@@ -100,7 +98,6 @@ class Bottleneck(nn.Module):
     out = self.relu(out)
 
     return out
-
 
 class ResNet(nn.Module):
   def __init__(self, block, layers, num_classes=1000):
@@ -162,7 +159,6 @@ class ResNet(nn.Module):
 
     return x
 
-
 def resnet18(pretrained=False):
   """Constructs a ResNet-18 model.
   Args:
@@ -173,7 +169,6 @@ def resnet18(pretrained=False):
     model.load_state_dict(model_zoo.load_url(model_urls['resnet18']))
   return model
 
-
 def resnet34(pretrained=False):
   """Constructs a ResNet-34 model.
   Args:
@@ -183,7 +178,6 @@ def resnet34(pretrained=False):
   if pretrained:
     model.load_state_dict(model_zoo.load_url(model_urls['resnet34']))
   return model
-
 
 def resnet50(pretrained=False):
   """Constructs a ResNet-50 model.
@@ -218,29 +212,26 @@ def resnet152(pretrained=False):
   return model
 
 class resnet(_fasterRCNN):
-  def __init__(self, classes, num_layers=101, pretrained=False, class_agnostic=False):
-    self.model_path = 'data/pretrained_model/resnet101_caffe.pth'
-    self.dout_base_model = 1024
+  def __init__(self, classes, num_layers=101, pretrained=False, class_agnostic=False, rpn_batchsize=None):
+    self.model_path = 'data/pretrained_model/resnet' + str(num_layers) + '_caffe.pth'
+    if num_layers == 18 or num_layers == 34:
+      self.dout_base_model = 256
+    else:
+      self.dout_base_model = 1024
+
     self.pretrained = pretrained
     self.class_agnostic = class_agnostic
+    self.rpn_batchsize = rpn_batchsize
     self.num_layers = num_layers
 
-    _fasterRCNN.__init__(self, classes, class_agnostic)
+    _fasterRCNN.__init__(self, classes, class_agnostic,rpn_batchsize)
 
   def _init_modules(self):
-    resnet = resnet101()
-
-    if self.num_layers == 18:
-        resnet = resnet18()
-    if self.num_layers == 34:
-        resnet = resnet34()     
-    if self.num_layers == 50:
-        resnet = resnet50()
-    if self.num_layers == 152:
-        resnet = resnet152()
+    resnet = eval('resnet' + str(self.num_layers))()
 
     if self.pretrained == True:
       print("Loading pretrained weights from %s" %(self.model_path))
+      #resnet = eval('resnet' + str(self.num_layers))(pretrained=True)
       state_dict = torch.load(self.model_path)
       resnet.load_state_dict({k:v for k,v in state_dict.items() if k in resnet.state_dict()})
 
@@ -249,12 +240,20 @@ class resnet(_fasterRCNN):
       resnet.maxpool,resnet.layer1,resnet.layer2,resnet.layer3)
 
     self.RCNN_top = nn.Sequential(resnet.layer4)
-
-    self.RCNN_cls_score = nn.Linear(2048, self.n_classes)
-    if self.class_agnostic:
-      self.RCNN_bbox_pred = nn.Linear(2048, 4)
+    if self.num_layers == 18 or self.num_layers == 34:
+      self.RCNN_cls_score = nn.Linear(512, self.n_classes)
     else:
-      self.RCNN_bbox_pred = nn.Linear(2048, 4 * self.n_classes)
+      self.RCNN_cls_score = nn.Linear(2048, self.n_classes)
+    if self.class_agnostic:
+      if self.num_layers == 18 or self.num_layers == 34:
+        self.RCNN_bbox_pred = nn.Linear(512, 4)
+      else:
+        self.RCNN_bbox_pred = nn.Linear(2048, 4)
+    else:
+      if self.num_layers == 18 or self.num_layers == 34:
+        self.RCNN_bbox_pred = nn.Linear(512, 4 * self.n_classes)
+      else:
+        self.RCNN_bbox_pred = nn.Linear(2048, 4 * self.n_classes)
 
     # Fix blocks
     for p in self.RCNN_base[0].parameters(): p.requires_grad=False
@@ -272,9 +271,9 @@ class resnet(_fasterRCNN):
       classname = m.__class__.__name__
       if classname.find('BatchNorm') != -1:
         for p in m.parameters(): p.requires_grad=False
-
-    self.RCNN_base.apply(set_bn_fix)
-    self.RCNN_top.apply(set_bn_fix)
+    if cfg.fix_bn:
+      self.RCNN_base.apply(set_bn_fix)
+      self.RCNN_top.apply(set_bn_fix)
 
   def train(self, mode=True):
     # Override train so that the training mode is set as we want
@@ -288,10 +287,11 @@ class resnet(_fasterRCNN):
       def set_bn_eval(m):
         classname = m.__class__.__name__
         if classname.find('BatchNorm') != -1:
+          # Sets the module in evaluation mode.
           m.eval()
-
-      self.RCNN_base.apply(set_bn_eval)
-      self.RCNN_top.apply(set_bn_eval)
+      if cfg.fix_bn:
+        self.RCNN_base.apply(set_bn_eval)
+        self.RCNN_top.apply(set_bn_eval)
 
   def _head_to_tail(self, pool5):
     fc7 = self.RCNN_top(pool5).mean(3).mean(2)

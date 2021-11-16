@@ -11,6 +11,7 @@
 import torch
 import numpy as np
 import pdb
+from model.utils.config import cfg
 
 def bbox_transform(ex_rois, gt_rois):
     ex_widths = ex_rois[:, 2] - ex_rois[:, 0] + 1.0
@@ -174,15 +175,15 @@ def bbox_overlaps_batch(anchors, gt_boxes):
     """
     batch_size = gt_boxes.size(0)
 
-
     if anchors.dim() == 2:
 
         N = anchors.size(0)
         K = gt_boxes.size(1)
 
+        gt_labelNbox = gt_boxes.clone()
+        
         anchors = anchors.view(1, N, 4).expand(batch_size, N, 4).contiguous()
         gt_boxes = gt_boxes[:,:,:4].contiguous()
-
 
         gt_boxes_x = (gt_boxes[:,:,2] - gt_boxes[:,:,0] + 1)
         gt_boxes_y = (gt_boxes[:,:,3] - gt_boxes[:,:,1] + 1)
@@ -205,12 +206,64 @@ def bbox_overlaps_batch(anchors, gt_boxes):
         ih = (torch.min(boxes[:,:,:,3], query_boxes[:,:,:,3]) -
             torch.max(boxes[:,:,:,1], query_boxes[:,:,:,1]) + 1)
         ih[ih < 0] = 0
+        # calculate total_area value
         ua = anchors_area + gt_boxes_area - (iw * ih)
-        overlaps = iw * ih / ua
 
+        # calculate shared_area/total_area value
+        overlaps = iw * ih / ua
         # mask the overlap here.
         overlaps.masked_fill_(gt_area_zero.view(batch_size, 1, K).expand(batch_size, N, K), 0)
-        overlaps.masked_fill_(anchors_area_zero.view(batch_size, N, 1).expand(batch_size, N, K), -1)
+
+        ## Wrote by Xudong Wang
+        #print gt_labelNbox
+        #print 'finished one calculation'
+        if cfg.imdb_name == "caltech_train":
+            # clean all the elements whose cls is not 2
+            people_overlaps = torch.zeros(overlaps.size())
+            for i in range(5):
+                gt_labelNbox[:,:,i][gt_labelNbox[:,:,4] != 2] = 0
+            
+            if torch.sum(gt_labelNbox[:,:,4]) != 0:
+                #print gt_labelNbox
+                labelNbox = gt_labelNbox[:,:,:4].contiguous()
+
+                gt_boxes_x = (gt_labelNbox[:,:,2] - gt_labelNbox[:,:,0] + 1)
+                gt_boxes_y = (gt_labelNbox[:,:,3] - gt_labelNbox[:,:,1] + 1)
+                gt_boxes_area = (gt_boxes_x * gt_boxes_y).view(batch_size, 1, K)
+
+                people_gt_area_zero = (gt_boxes_x == 1) & (gt_boxes_y == 1)
+
+                query_boxes = labelNbox.view(batch_size, 1, K, 4).expand(batch_size, N, K, 4)
+
+                iw = (torch.min(boxes[:,:,:,2], query_boxes[:,:,:,2]) -
+                    torch.max(boxes[:,:,:,0], query_boxes[:,:,:,0]) + 1)
+                iw[iw < 0] = 0
+
+                ih = (torch.min(boxes[:,:,:,3], query_boxes[:,:,:,3]) -
+                    torch.max(boxes[:,:,:,1], query_boxes[:,:,:,1]) + 1)
+                ih[ih < 0] = 0
+                # calculate total_area value, for area space, we will use anchor 
+                # area as the total area size
+                ua = anchors_area
+
+                # calculate shared_area/total_area value
+                people_overlaps = iw * ih / ua
+                people_overlaps.masked_fill_(people_gt_area_zero.view(batch_size, 1, K).expand(batch_size, N, K), 0)
+                people_overlaps.masked_fill_(anchors_area_zero.view(batch_size, N, 1).expand(batch_size, N, K), 0)
+                #print('people overlaps size is: ', people_overlaps.size())
+                # change corresponding overlaps
+                overlaps[people_overlaps != 0] = 0
+                #nonpeople_inds = (people_overlaps != 0)
+
+                overlaps = overlaps + people_overlaps
+                #print('people_inds sum is: ', torch.sum(nonpeople_inds))
+                #print (gt_labelNbox[:,:,4] == 2)
+                ## end
+            overlaps.masked_fill_(anchors_area_zero.view(batch_size, N, 1).expand(batch_size, N, K), -1)
+            return overlaps, gt_labelNbox
+        else:
+            overlaps.masked_fill_(anchors_area_zero.view(batch_size, N, 1).expand(batch_size, N, K), -1)
+            return overlaps       
 
     elif anchors.dim() == 3:
         N = anchors.size(1)
@@ -245,8 +298,7 @@ def bbox_overlaps_batch(anchors, gt_boxes):
             torch.max(boxes[:,:,:,1], query_boxes[:,:,:,1]) + 1)
         ih[ih < 0] = 0
         ua = anchors_area + gt_boxes_area - (iw * ih)
-        
-        # Intersection (iw * ih) divided by Union (ua)
+
         overlaps = iw * ih / ua
 
         # mask the overlap here.
@@ -254,5 +306,4 @@ def bbox_overlaps_batch(anchors, gt_boxes):
         overlaps.masked_fill_(anchors_area_zero.view(batch_size, N, 1).expand(batch_size, N, K), -1)
     else:
         raise ValueError('anchors input dimension is not correct.')
-
     return overlaps
