@@ -35,6 +35,7 @@ from model.faster_rcnn.resnet import resnet
 
 from query_strategies.random_sampling import RandomSampling_poolbased
 from query_strategies.entropy_uncertainty import EntropyUncertainty_poolbased
+from query_strategies.weighted_entropy_uncertainty import WeightedEntropyUncertainty_poolbased
 from query_strategies.dropout_uncertainty import DropoutUncertainty_poolbased
 
 
@@ -46,7 +47,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a Fast R-CNN network')
     parser.add_argument('--exp', type=str, default='entropy_al_semi')
     parser.add_argument('--query_strategies', default='entropy',
-                        help='random | entropy | dropout_sampling')
+                        help='random | entropy | weighted_entropy | dropout_sampling')
     parser.add_argument('--dataset', dest='dataset',
                         help='training dataset',
                         default='pascal_voc_0712', type=str)
@@ -263,6 +264,8 @@ if __name__ == '__main__':
         Query = RandomSampling_poolbased(num_query)
     elif args.query_strategies=='entropy':
         Query = EntropyUncertainty_poolbased(num_query)
+    elif args.query_strategies=='weighted_entropy':
+        Query = WeightedEntropyUncertainty_poolbased(num_query)
     elif args.query_strategies=='dropout_sampling':
         Query = DropoutUncertainty_poolbased(num_query)
     else:
